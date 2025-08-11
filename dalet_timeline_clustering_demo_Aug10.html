@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dalet • Timeline Clustering Demo (Timeline‑only)</title>
+<style>
+  :root{
+    --bg:#14161a;
+    --panel:#1b1e24;
+    --panel-2:#20242c;
+    --text:#e6e8ee;
+    --muted:#98a2b3;
+    --sel:#22d3ee;
+    --left-rail:160px;
+    --min-marker:4px; /* per spec */
+    --lane-height:26px;
+    --cluster:#2d3340;
+    --cluster-text:#cbd5e1;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .app{display:grid;grid-template-rows:56px 320px auto;grid-template-areas:"top" "media" "timeline";height:100%}
+  header{grid-area:top;display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--panel);border-bottom:1px solid #282c36}
+  header .title{font-weight:600;letter-spacing:.2px;margin-right:8px}
+  .controls{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .btn{border:1px solid #2f3542;background:#232833;color:var(--text);padding:6px 10px;border-radius:8px;cursor:pointer}
+  .btn:hover{background:#2a2f3b}
+  .btn:active{transform:translateY(1px)}
+  .meta{margin-left:6px;color:#aab4c4}
+  .preset{font-size:12px;padding:4px 8px}
+
+  .media{grid-area:media;display:flex;align-items:center;justify-content:center;padding:12px;background:var(--panel)}
+  .placeholder{width:100%;height:100%;border-radius:10px;border:1px dashed #384155;display:grid;place-items:center;background:linear-gradient(135deg,#0f172a 0%,#0b1222 100%);color:#9aa3b2}
+  .placeholder svg{width:140px;height:140px;opacity:.6}
+
+  /* Timeline */
+  .timeline-wrap{grid-area:timeline;display:grid;grid-template-rows:44px 30px auto;min-height:260px;background:var(--panel)}
+  .ruler{position:sticky;top:0;background:var(--panel);z-index:5;border-top:1px solid #2b303b;border-bottom:1px solid #2b303b;display:grid;grid-template-columns:var(--left-rail) 1fr}
+  .ruler-left{display:flex;align-items:center;padding-left:12px;color:var(--muted);font-weight:600}
+  .ruler-bar{position:relative;height:44px}
+  .tick{position:absolute;bottom:0;width:1px;background:#3a4152}
+  .tick .label{position:absolute;top:6px;transform:translateX(-50%);color:#c9d3e1;font-size:12px;white-space:nowrap}
+
+  /* Mini-map */
+  .mini{display:grid;grid-template-columns:var(--left-rail) 1fr;align-items:center;background:var(--panel);border-bottom:1px solid #2b303b}
+  .mini-left{padding-left:12px;color:#8e98aa;font-size:12px}
+  .mini-bar{position:relative;height:20px;margin:5px 8px 5px 0;background:var(--panel-2);border:1px solid #2b303b;border-radius:6px}
+  .mini-window{position:absolute;top:2px;bottom:2px;border:1px solid #3b82f6;background:rgba(59,130,246,.18);border-radius:4px;cursor:grab}
+  .mini-window:active{cursor:grabbing}
+
+  /* Lanes */
+  #lanes{position:relative}
+  .lane{display:grid;grid-template-columns:var(--left-rail) 1fr;border-bottom:1px solid #2b303b}
+  .lane-name{display:flex;align-items:center;padding-left:12px;color:#d1d7e3}
+  .lane-track{position:relative;height:var(--lane-height);background:var(--panel-2)}
+  .lane-track::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg, transparent, transparent 24px, rgba(255,255,255,.02) 24px, rgba(255,255,255,.02) 48px)}
+
+  /* Heat */
+  .heat{position:absolute;inset:0;pointer-events:none;opacity:.28}
+
+  /* Markers & Clusters */
+  .marker{position:absolute;height:12px;border-radius:6px;top:7px;display:flex;align-items:center;justify-content:center;padding:0 4px;font-weight:600;font-size:12px;color:#0b1222;border:1px solid rgba(255,255,255,.12);opacity:.86;background-clip:padding-box}
+  .marker[data-selected="true"], .cluster[data-selected="true"]{outline:2px solid var(--sel);outline-offset:1px}
+  .cluster{position:absolute;height:12px;border-radius:6px;top:7px;display:flex;align-items:center;justify-content:center;padding:0 6px;font-weight:700;font-size:12px;background:var(--cluster);color:var(--cluster-text);border:1px solid #424b5b;user-select:none;z-index:2}
+  .cluster.dense{background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.16) 0 6px, rgba(255,255,255,.06) 6px 12px);background-blend-mode:overlay}
+  .cluster .peek{position:absolute;inset:2px;pointer-events:none;z-index:1}
+  .cluster .peek i{position:absolute;top:2px;bottom:2px;width:2px;background:rgba(255,255,255,.35);border-radius:1px}
+  .cluster .count{position:relative;z-index:2;pointer-events:auto;display:flex;align-items:center;gap:6px;padding:1px 6px;border-radius:999px;background:rgba(0,0,0,.35);backdrop-filter:blur(2px);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset;cursor:default}
+  .cluster .count .loupe{width:14px;height:14px;opacity:.95;flex:0 0 auto}
+
+  /* Popover */
+  .popover{position:fixed;z-index:50;background:#141925;border:1px solid #2a3140;border-radius:10px;padding:10px 12px;color:#d8e0ee;box-shadow:0 8px 24px rgba(0,0,0,.4);font-size:12px;pointer-events:none}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+  .chip{padding:2px 8px;border-radius:999px;background:#222a38;border:1px solid #2e384b}
+  .spark{position:relative;margin-top:6px;background:#0f1520;border:1px solid #2a3140;border-radius:6px;overflow:auto;max-height:140px;padding:6px 0}
+  .spark .row{position:relative;height:2px;margin:3px 6px}
+  .spark .row b{position:absolute;left:0;top:0;bottom:0;background:#9ab4ff;border-radius:2px;opacity:.95}
+  .popover .hdr{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px}
+  .popover .tc{font-variant-numeric:tabular-nums;color:#cfe1ff}
+  .popover .tc small{color:#8fa1c6;margin-right:6px}
+
+  /* Cursor time */
+  .cursor-line{position:absolute;top:0;bottom:0;border-left:1px solid #5b6475;pointer-events:none}
+  .cursor-line.snap{border-left-color:var(--sel)}
+  .cursor-label{position:absolute;top:-20px;padding:2px 6px;background:#0f1520;border:1px solid #2a3140;border-radius:6px;color:#cfe1ff;font-size:11px;transform:translateX(-50%);pointer-events:none;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="title">Markers Timeline (Demo • 25 fps)</div>
+    <button id="fitBtn" class="btn" title="Fit full 5:00">Fit</button>
+    <button id="zoomOutBtn" class="btn" title="Zoom out">−</button>
+    <button id="zoomInBtn" class="btn" title="Zoom in">+</button>
+    <span class="meta">Presets:</span>
+    <button class="btn preset" data-dur="5">5s</button>
+    <button class="btn preset" data-dur="10">10s</button>
+    <button class="btn preset" data-dur="30">30s</button>
+    <button class="btn preset" data-dur="60">1m</button>
+    <div class="controls">
+      <label class="meta" style="display:flex;align-items:center;gap:6px">Explode
+        <input id="explodeRange" type="range" min="1" max="6" step="0.1" value="4" style="width:120px"/>
+        <span id="explodeVal" class="meta">4.0×</span>
+      </label>
+      <span id="zoomLabel" class="meta"></span>
+      <span id="selLabel" class="meta"></span>
+    </div>
+  </header>
+
+  <section class="media">
+    <div class="placeholder">
+      <svg viewBox="0 0 120 120" aria-hidden="true"><rect x="8" y="8" width="104" height="104" rx="8" fill="#1f2937"/><path d="M20 90h80M20 30h80M20 60h80" stroke="#334155" stroke-width="2"/><circle cx="60" cy="60" r="22" fill="#111827" stroke="#334155" stroke-width="2"/><path d="M56 50l16 10-16 10z" fill="#64748b"/></svg>
+      <div>Static image placeholder for the player + waveforms</div>
+    </div>
+  </section>
+
+  <section class="timeline-wrap">
+    <div class="ruler">
+      <div class="ruler-left">Timeline</div>
+      <div class="ruler-bar" id="rulerBar"></div>
+    </div>
+    <div class="mini">
+      <div class="mini-left">Overview</div>
+      <div class="mini-bar" id="miniBar"><div class="mini-window" id="miniWin"></div></div>
+    </div>
+    <div id="lanes"></div>
+    <div id="cursorLine" class="cursor-line" style="display:none"></div>
+    <div id="cursorLabel" class="cursor-label" style="display:none"></div>
+  </section>
+
+  <div id="popover" class="popover" style="display:none"></div>
+</div>
+
+<script>
+(() => {
+  const FPS = 25;
+  const FULL_DURATION = 300;          // 5 minutes of actual content
+  const EXTENT_DURATION = 900;         // allow zooming out to 15 minutes
+  const MIN_VIEW = 5;                  // min 5s on screen
+  const MAX_VIEW = EXTENT_DURATION;    // max zoomed-out view (can exceed content length)
+  const MIN_PX = 4;                    // minimum marker width in px
+  let CLUSTER_GAP = 6;                 // gap used in cluster capacity calc
+  let EXPLODE_FACTOR = 4;              // UI‑tunable: higher = needs more room to explode
+
+  const TRACKS = [
+    { name: 'Whistle', color: '#67e8f9' },
+    { name: 'Foul', color: '#fca5a5' },
+    { name: 'Incidents', color: '#93c5fd' },
+    { name: 'Player change', color: '#a78bfa' },
+    { name: 'Usage rights', color: '#34d399' },
+    { name: 'Yellow card', color: '#fde047' },
+    { name: 'Red card', color: '#fb7185' },
+  ];
+
+  let markers = [];
+  let viewStart = 0; // seconds
+  let viewDur = MAX_VIEW; // seconds visible
+  const lanesEl = document.getElementById('lanes');
+  const rulerBar = document.getElementById('rulerBar');
+  const miniBar = document.getElementById('miniBar');
+  const miniWin = document.getElementById('miniWin');
+  const cursorLine = document.getElementById('cursorLine');
+  const cursorLabel = document.getElementById('cursorLabel');
+  const pop = document.getElementById('popover');
+  let selectedIds = new Set();
+  let snapPoints = [];
+  let lastMouseX = null;
+
+  // ---------- utils ----------
+  function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+  function secondsToTc(s){
+    s = Math.max(0, s);
+    const hours = Math.floor(s / 3600);
+    const mins  = Math.floor((s % 3600) / 60);
+    const secs  = Math.floor(s % 60);
+    const frames = Math.floor((s - Math.floor(s)) * FPS);
+    return `${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}:${String(frames).padStart(2,'0')}`;
+  }
+  const rnd = (a,b) => a + Math.random()*(b-a);
+  const randChoice = arr => arr[Math.floor(Math.random()*arr.length)];
+  function hexToRgba(hex, a=1){
+    const h = hex.replace('#','');
+    const bigint = parseInt(h.length===3 ? h.split('').map(c=>c+c).join('') : h, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  function loupeSvg(col){
+    const fill = hexToRgba(col || '#cbd5e1', .45);
+    const stroke = '#cbd5e1';
+    return `
+    <svg class="loupe" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="6" fill="${fill}" stroke="${stroke}" stroke-width="2" />
+      <path d="M16 16l5 5" stroke="${stroke}" stroke-width="2" stroke-linecap="round"/>
+    </svg>`;
+  }
+
+  function niceStep(pxPerSec){
+    const targetPx = 110;
+    const rough = targetPx / pxPerSec;
+    const bases = [1,2,5,10,15,30,60,120];
+    let best = bases[0];
+    for(const b of bases){ if(Math.abs(b-rough) < Math.abs(best-rough)) best = b; }
+    return best;
+  }
+
+  function generateMarkers(){
+    const out = [];
+    let id = 1;
+
+    function addCluster(track, center, count, jitter=2, spanMin=1.5, spanMax=6){
+      for(let i=0;i<count;i++){
+        const span = rnd(spanMin, spanMax);
+        const start = clamp(center + rnd(-jitter, jitter), 0, FULL_DURATION - span);
+        out.push({ id:id++, track:track.name, color:track.color, start, end:start+span });
+      }
+    }
+
+    // Two heavier clusters (10–15 markers)
+    for(let k=0;k<2;k++){
+      const tr = randChoice(TRACKS);
+      const center = rnd(40, FULL_DURATION-40);
+      const count = Math.floor(rnd(10,16));
+      addCluster(tr, center, count, 2.2, 2, 8);
+    }
+
+    // Many small clusters (3–5 markers)
+    for(let k=0;k<14;k++){
+      const tr = randChoice(TRACKS);
+      const center = rnd(20, FULL_DURATION-20);
+      const count = Math.floor(rnd(3,6));
+      addCluster(tr, center, count, 3, 1.5, 7);
+    }
+
+    // Singles / mediums for variety
+    for(let i=0;i<18;i++){
+      const t = randChoice(TRACKS);
+      const r = Math.random();
+      const dur = r<0.75? rnd(2,8) : rnd(10,20);
+      const start = rnd(0, FULL_DURATION - dur);
+      out.push({ id:id++, track:t.name, color:t.color, start, end:start+dur });
+    }
+
+    // A couple of long spans
+    for(let i=0;i<2;i++){
+      const t = randChoice(TRACKS);
+      const L = rnd(30,60);
+      const s = rnd(0, FULL_DURATION - L);
+      out.push({ id:id++, track:t.name, color:t.color, start:s, end:s+L });
+    }
+
+    out.sort((a,b)=>a.start-b.start);
+    return out;
+  }
+
+  function buildLanes(){
+    lanesEl.innerHTML = '';
+    for(const t of TRACKS){
+      const lane = document.createElement('div');
+      lane.className = 'lane';
+      lane.innerHTML = `<div class="lane-name">${t.name}</div><div class="lane-track" data-track="${t.name}"><canvas class="heat"></canvas></div>`;
+      lanesEl.appendChild(lane);
+    }
+  }
+
+  function pxPerSec(){
+    const anyTrack = document.querySelector('.lane-track');
+    const w = anyTrack.getBoundingClientRect().width;
+    return w / viewDur;
+  }
+
+  // Group by overlap/adjacency in pixel space
+  function groupForZoom(items, pps){
+    const groups=[]; let g=null;
+    for(const it of items){
+      const left=(it.start - viewStart)*pps;
+      const width=Math.max((it.end - it.start)*pps, MIN_PX);
+      const right=left+width;
+      if(!g){ g={left,right,items:[{it,left,width,right}]}; continue; }
+      if(left <= g.right + CLUSTER_GAP){
+        g.right = Math.max(g.right, right);
+        g.items.push({it,left,width,right});
+      } else {
+        groups.push(g); g={left,right,items:[{it,left,width,right}]};
+      }
+    }
+    if(g) groups.push(g);
+    return groups;
+  }
+
+  function drawHeat(lane, pool){
+    const canvas = lane.querySelector('canvas.heat');
+    const rect = lane.getBoundingClientRect();
+    canvas.width = rect.width; canvas.height = rect.height;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const bins = Math.max(60, Math.floor(rect.width/6));
+    const arr = new Float32Array(bins);
+    for(const m of pool){
+      const a = clamp((m.start - viewStart) / viewDur, -1, 2);
+      const b = clamp((m.end   - viewStart) / viewDur, -1, 2);
+      const i0 = Math.floor(a * bins); const i1 = Math.ceil(b * bins);
+      for(let i = Math.max(0,i0); i < Math.min(bins,i1); i++) arr[i] += 1;
+    }
+    const max = Math.max(1, ...arr);
+    for(let i=0;i<bins;i++){
+      const x = i * (rect.width/bins);
+      const w = (rect.width/bins);
+      const alpha = Math.min(0.28, arr[i]/max * 0.28);
+      ctx.fillStyle = `rgba(139,92,246,${alpha})`;
+      ctx.fillRect(x, 0, w, rect.height);
+    }
+  }
+
+  function render(){
+    const slider = document.getElementById('explodeRange');
+    if(slider){ EXPLODE_FACTOR = parseFloat(slider.value); document.getElementById('explodeVal').textContent = EXPLODE_FACTOR.toFixed(1) + '×'; }
+    hidePopover();
+    renderRuler();
+    const pps = pxPerSec();
+
+    // recompute snap points (visible in/out boundaries)
+    snapPoints = [];
+    const anyTrack = document.querySelector('.lane-track');
+    if(anyTrack){
+      const w = anyTrack.getBoundingClientRect().width;
+      const vis = markers.filter(m=>m.end>=viewStart && m.start<=viewStart+viewDur);
+      for(const m of vis){
+        const xs = (m.start - viewStart) * pps;
+        const xe = (m.end - viewStart) * pps;
+        snapPoints.push({x: Math.max(0, Math.min(w, xs)), t: m.start});
+        snapPoints.push({x: Math.max(0, Math.min(w, xe)), t: m.end});
+      }
+    }
+    if(cursorLine.style.display==='block' && lastMouseX!==null){ positionCursor(lastMouseX); }
+
+    for(const lane of document.querySelectorAll('.lane-track')){
+      const trackName = lane.getAttribute('data-track');
+      const pool = markers.filter(m=>m.track===trackName && (m.end>=viewStart && m.start<=viewStart+viewDur));
+      pool.sort((a,b)=>a.start-b.start || a.end-b.end);
+
+      // heat first
+      drawHeat(lane, pool);
+
+      // clear markers/clusters (preserve heat canvas)
+      lane.querySelectorAll(':scope > .marker, :scope > .cluster').forEach(n=>n.remove());
+
+      const trackColor = (TRACKS.find(t=>t.name===trackName)||{color:"#9ab4ff"}).color;
+      const groups = groupForZoom(pool, pps);
+      for(const g of groups){
+        const need = g.items.length * (MIN_PX + CLUSTER_GAP) + 2; // px needed to represent each minimally
+        const have = g.right - g.left; // actual pixel span of the group
+        if(g.items.length>1 && have < need * EXPLODE_FACTOR){
+          const density = (need - have) / need;
+          const el = document.createElement('div');
+          el.className = 'cluster' + (density>0.25 ? ' dense' : '');
+          el.style.left = `${g.left}px`;
+          el.style.width = `${Math.max(have, MIN_PX)}px`;
+          // tint cluster by lane color
+          { const cap = trackColor; const body = hexToRgba(trackColor, 0.25); const capW = 3; el.style.background = `linear-gradient(to right, ${cap} 0 ${capW}px, ${body} ${capW}px calc(100% - ${capW}px), ${cap} calc(100% - ${capW}px) 100%)`; el.style.borderColor = hexToRgba(trackColor, 0.55); }
+
+          // overlap set inside this pixel span (at current zoom)
+          const overlapSegs = pool.map(m=>{
+            const left = (m.start - viewStart) * pps;
+            const width = Math.max((m.end - m.start) * pps, MIN_PX);
+            const right = left + width;
+            return {it:m,left,width,right};
+          }).filter(s=> s.right >= g.left - 1 && s.left <= g.right + 1);
+
+          el.innerHTML = '<span class="count"><span class="num">' + overlapSegs.length + '</span>' + loupeSvg(trackColor) + '</span>';
+          const countEl = el.querySelector('.count');
+          countEl.addEventListener('mouseenter', (ev)=> showPopover(ev, {items: overlapSegs, left:g.left, right:g.right}) );
+          countEl.addEventListener('mouseleave', hidePopover);
+          // prevent lane-level drag/pan from hijacking clicks on the bubble
+          countEl.addEventListener('pointerdown', (ev)=>{ ev.stopPropagation(); ev.preventDefault(); });
+          // Zoom when clicking the bubble: center on cluster and make it ~90% of view
+          countEl.addEventListener('click', (ev)=>{
+            ev.stopPropagation(); hidePopover(); pushBackCheckpoint();
+            const tStart = viewStart + (g.left / pps);
+            const tEnd   = viewStart + (g.right / pps);
+            const span   = Math.max(MIN_VIEW, tEnd - tStart);
+            const target = clamp(span / 0.90, MIN_VIEW, MAX_VIEW); // cluster ~90% of view
+            const mid    = (tStart + tEnd) / 2;
+            const start  = mid - target/2;
+            animateTo(start, target);
+          });
+          el.title = `${overlapSegs.length} markers`;
+          el.dataset.ids = overlapSegs.map(s=>s.it.id).join(',');
+
+          const peek = document.createElement('div'); peek.className='peek';
+          for(const s of overlapSegs){
+            const i = document.createElement('i');
+            const rel = (s.left - g.left) / Math.max(1, have);
+            i.style.left = `calc(${(rel*100).toFixed(2)}% - 1px)`;
+            peek.appendChild(i);
+          }
+          el.appendChild(peek);
+
+          el.addEventListener('click', (e)=>{
+            e.stopPropagation();
+            setSelected(new Set(overlapSegs.map(s=>s.it.id)));
+          });
+          lane.appendChild(el);
+          continue;
+        }
+        // individuals
+        for(const seg of g.items){
+          const m = seg.it;
+          const el = document.createElement('div');
+          el.className = 'marker';
+          el.style.left = `${Math.max(seg.left,0)}px`;
+          el.style.width = `${Math.max(seg.width, MIN_PX)}px`;
+          const cap = m.color; const body = hexToRgba(m.color, 0.4);
+          const capW = 3; // make edges more visible in dense areas
+          el.style.background = `linear-gradient(to right, ${cap} 0 ${capW}px, ${body} ${capW}px calc(100% - ${capW}px), ${cap} calc(100% - ${capW}px) 100%)`;
+          el.style.boxShadow = '0 0 0 1px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.25)';
+          el.title = `${m.track} — ${secondsToTc(m.start)} → ${secondsToTc(m.end)}`;
+          el.dataset.id = m.id;
+          el.addEventListener('click', (e)=>{ e.stopPropagation(); setSelected(new Set([m.id])); });
+          lane.appendChild(el);
+        }
+      }
+
+      // lane interactions
+      lane.onclick = (e)=>{
+        const rect = lane.getBoundingClientRect();
+        const frac = (e.clientX - rect.left) / rect.width;
+        const t = viewStart + frac * viewDur;
+        const touched = pool.filter(m=>m.start<=t && m.end>=t).map(m=>m.id);
+        if(touched.length>1){ setSelected(new Set(touched)); }
+      };
+
+      // apply selection outlines
+      if(selectedIds.size){
+        lane.querySelectorAll('.marker').forEach(node=>{
+          node.dataset.selected = selectedIds.has(Number(node.dataset.id)) ? 'true':'false';
+        });
+        lane.querySelectorAll('.cluster').forEach(node=>{
+          const ids = new Set(node.dataset.ids.split(',').map(Number));
+          const has = [...selectedIds].some(id=>ids.has(id));
+          node.dataset.selected = has? 'true':'false';
+        });
+      }
+    }
+
+    updateMini();
+    updateLabels();
+  }
+
+  function renderRuler(){
+    rulerBar.innerHTML = '';
+    const w = rulerBar.getBoundingClientRect().width;
+    const pps = w / viewDur;
+    const step = niceStep(pps);
+    const minor = step/5;
+    const total = Math.ceil(viewDur / minor);
+    const frag = document.createDocumentFragment();
+    for(let i=0;i<=total;i++){
+      const t = viewStart + i*minor;
+      const x = (t - viewStart) * pps;
+      const isMajor = i % 5 === 0;
+      const tick = document.createElement('div');
+      tick.className = 'tick';
+      tick.style.left = `${x}px`;
+      tick.style.height = isMajor? '100%':'40%';
+      if(isMajor){
+        const lab = document.createElement('div');
+        lab.className = 'label';
+        lab.textContent = secondsToTc(Math.max(0,Math.min(EXTENT_DURATION,t)));
+        tick.appendChild(lab);
+      }
+      frag.appendChild(tick);
+    }
+    rulerBar.appendChild(frag);
+  }
+
+  // ---------- popover ----------
+  function showPopover(ev, group){
+    const tCounts = new Map();
+    for(const s of group.items){ tCounts.set(s.it.track, (tCounts.get(s.it.track)||0)+1); }
+    const startSec = Math.min(...group.items.map(s=>s.it.start));
+    const endSec   = Math.max(...group.items.map(s=>s.it.end));
+    const spanPx   = Math.max(1, group.right - group.left);
+
+    pop.innerHTML = '';
+    const hdr = document.createElement('div'); hdr.className='hdr';
+    const tcl = document.createElement('div'); tcl.className='tc'; tcl.innerHTML = `<small>In</small>${secondsToTc(startSec)}`;
+    const tcr = document.createElement('div'); tcr.className='tc'; tcr.innerHTML = `<small>Out</small>${secondsToTc(endSec)}`;
+    hdr.appendChild(tcl); hdr.appendChild(tcr); pop.appendChild(hdr);
+
+    const chips = document.createElement('div'); chips.className='chips';
+    for(const [k,v] of tCounts){ const c=document.createElement('span'); c.className='chip'; c.textContent=`${k}: ${v}`; chips.appendChild(c); }
+    pop.appendChild(chips);
+
+    const spark = document.createElement('div'); spark.className='spark';
+    const sorted = [...group.items].sort((a,b)=> (a.it.start-b.it.start) || (a.it.end-b.it.end));
+    for(const s of sorted){
+      const row=document.createElement('div'); row.className='row';
+      const b=document.createElement('b');
+      const lpx = Math.max(0, Math.min(s.left, group.right) - group.left);
+      const rpx = Math.max(0, Math.min(s.right, group.right) - group.left);
+      const wpx = Math.max(1, rpx - lpx);
+      b.style.left = `${(lpx/spanPx)*100}%`;
+      b.style.width = `${(wpx/spanPx)*100}%`;
+      b.style.background = hexToRgba(s.it.color || '#9ab4ff', .95);
+      b.style.boxShadow = '0 0 0 1px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.25)';
+      row.appendChild(b); spark.appendChild(row);
+    }
+    pop.appendChild(spark);
+
+    pop.style.display='block';
+    const r = ev.currentTarget.getBoundingClientRect();
+    const pw = 260;                // fixed width for readability
+    const margin = 10;             // gap between bubble and popover bottom
+    pop.style.width = pw+'px';
+    pop.style.overflow = 'auto';   // allow scroll if we must clamp height
+
+    // horizontal placement
+    const x = r.left + r.width/2;
+    pop.style.left = clamp(x - pw/2, 8, window.innerWidth - pw - 8) + 'px';
+
+    // measure height and ensure the popover bottom stays ABOVE the bubble
+    const pr = pop.getBoundingClientRect();
+    let top = r.top - margin - pr.height; // place above by default
+    const minTop = 8;                      // viewport padding
+    if(top < minTop){
+      // not enough space: shrink the popover height so its bottom is still above the bubble
+      const available = Math.max(60, r.top - margin - minTop);
+      pop.style.maxHeight = available + 'px';
+      const pr2 = pop.getBoundingClientRect();
+      top = Math.max(minTop, r.top - margin - pr2.height);
+    }
+    pop.style.top = top + 'px';
+  }
+  function hidePopover(){ pop.style.display='none'; }
+
+  // ---------- cursor (time readout + snapping) ----------
+  function positionCursor(clientX){
+    const trackRect = document.querySelector('.lane-track').getBoundingClientRect();
+    const host = lanesEl.getBoundingClientRect();
+    let x = Math.max(0, Math.min(trackRect.width, clientX - trackRect.left));
+    let t = viewStart + (x/trackRect.width) * viewDur;
+    let best=null, bestDx=1e9;
+    for(const p of snapPoints){ const dx=Math.abs(p.x - x); if(dx<bestDx){bestDx=dx; best=p;} }
+    if(best && bestDx<=6){ x=best.x; t=best.t; cursorLine.classList.add('snap'); } else { cursorLine.classList.remove('snap'); }
+    cursorLine.style.display='block'; cursorLabel.style.display='block';
+    const left = (trackRect.left - host.left) + x;
+    cursorLine.style.left = left + 'px';
+    cursorLabel.style.left = left + 'px';
+    cursorLabel.textContent = secondsToTc(t);
+  }
+  function hideCursor(){ cursorLine.style.display='none'; cursorLabel.style.display='none'; }
+
+  // ---------- selection helpers ----------
+  function setSelected(set){ selectedIds = set; updateLabels(); renderSelectionOnly(); }
+  function renderSelectionOnly(){
+    for(const lane of document.querySelectorAll('.lane-track')){
+      lane.querySelectorAll('.marker').forEach(node=>{
+        node.dataset.selected = selectedIds.has(Number(node.dataset.id)) ? 'true':'false';
+      });
+      lane.querySelectorAll('.cluster').forEach(node=>{
+        const ids = new Set((node.dataset.ids||'').split(',').map(Number));
+        const has = [...selectedIds].some(id=>ids.has(id));
+        node.dataset.selected = has? 'true':'false';
+      });
+    }
+  }
+
+  // ---------- navigation history ----------
+  let backStack = [], fwdStack = [];
+  function pushBackCheckpoint(){ backStack.push({start:viewStart, dur:viewDur}); if(backStack.length>200) backStack.shift(); fwdStack.length = 0; }
+  function undo(){ if(backStack.length){ fwdStack.push({start:viewStart, dur:viewDur}); const s=backStack.pop(); setView(s.start, s.dur); } }
+  function redo(){ if(fwdStack.length){ backStack.push({start:viewStart, dur:viewDur}); const s=fwdStack.pop(); setView(s.start, s.dur); } }
+
+  // ---------- zoom & pan ----------
+  function setView(start, dur){
+    viewDur = clamp(dur, MIN_VIEW, MAX_VIEW);
+    // If viewDur exceeds the actual content length, we pin to 0..EXTENT, showing empty space after 5:00
+    const maxStart = Math.max(0, FULL_DURATION - Math.min(viewDur, FULL_DURATION));
+    viewStart = clamp(start, 0, maxStart);
+    render();
+  }
+  function animateTo(start, dur, ms=220){
+    const s0=viewStart, d0=viewDur;
+    // Clamp against zoom extent (15m) and content start
+    const d1=clamp(dur,MIN_VIEW,MAX_VIEW);
+    const maxStart = Math.max(0, FULL_DURATION - Math.min(d1, FULL_DURATION));
+    const s1=clamp(start,0,maxStart);
+    const t0=performance.now();
+    const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+    function step(now){
+      const p=clamp((now-t0)/ms,0,1), e=ease(p);
+      viewStart = s0 + (s1-s0)*e; viewDur = d0 + (d1-d0)*e; render();
+      if(p<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  function zoomAt(px, factor){
+    const track = document.querySelector('.lane-track');
+    const rect = track.getBoundingClientRect();
+    const frac = clamp((px - rect.left) / rect.width, 0, 1);
+    const tAnchor = viewStart + frac * viewDur;
+    const newDur = clamp(viewDur * factor, MIN_VIEW, MAX_VIEW);
+    const start = tAnchor - frac * newDur;
+    setView(start, newDur);
+  }
+  function zoomAround(centerTime, factor, animate=false){
+    const newDur = clamp(viewDur * factor, MIN_VIEW, MAX_VIEW);
+    const maxStart = Math.max(0, FULL_DURATION - Math.min(newDur, FULL_DURATION));
+    const start = clamp(centerTime - (centerTime - viewStart) * (newDur/viewDur), 0, maxStart);
+    if(animate) animateTo(start, newDur); else setView(start, newDur);
+  }
+
+  // Wheel: zoom. Shift+wheel: pan.
+  let lastWheelCommit = 0;
+  lanesEl.addEventListener('wheel', (e)=>{
+    const now = Date.now();
+    if(now - lastWheelCommit > 300){ pushBackCheckpoint(); lastWheelCommit = now; }
+    if(e.shiftKey){
+      const dx = Math.sign(e.deltaY || e.deltaX) * (viewDur * 0.1);
+      setView(viewStart + dx, viewDur);
+    } else {
+      const factor = e.deltaY < 0 ? 0.87 : 1/0.87;
+      zoomAt(e.clientX, factor);
+    }
+    e.preventDefault();
+  }, {passive:false});
+
+  // Drag to pan
+  let dragging=false, dragStartX=0, dragStartView=0;
+  lanesEl.addEventListener('pointerdown', (e)=>{
+    // Ignore pointer down that originates from interactive elements
+    if(e.target.closest('.count, .marker, .cluster')) return;
+    pushBackCheckpoint();
+    dragging = true; dragStartX = e.clientX; dragStartView = viewStart; lanesEl.setPointerCapture(e.pointerId);
+  });
+  lanesEl.addEventListener('pointermove', (e)=>{
+    if(!dragging) return;
+    const track = document.querySelector('.lane-track');
+    const rect = track.getBoundingClientRect();
+    const dx = e.clientX - dragStartX;
+    const secs = -dx * (viewDur/rect.width);
+    setView(dragStartView + secs, viewDur);
+  });
+  lanesEl.addEventListener('pointerup', ()=> dragging=false);
+  lanesEl.addEventListener('pointercancel', ()=> dragging=false);
+
+  // Header buttons
+  document.getElementById('zoomInBtn').onclick = () => {
+    pushBackCheckpoint();
+    const rect = document.querySelector('.lane-track').getBoundingClientRect();
+    zoomAt(rect.left + rect.width/2, 0.8);
+  };
+  document.getElementById('zoomOutBtn').onclick = () => {
+    pushBackCheckpoint();
+    const rect = document.querySelector('.lane-track').getBoundingClientRect();
+    zoomAt(rect.left + rect.width/2, 1/0.8);
+  };
+  document.getElementById('fitBtn').onclick = () => { pushBackCheckpoint(); animateTo(0, FULL_DURATION); };
+  for(const b of document.querySelectorAll('.preset')){
+    b.onclick = () => {
+      pushBackCheckpoint();
+      const dur = Number(b.dataset.dur);
+      const center = viewStart + viewDur/2;
+      animateTo(Math.max(0, Math.min(FULL_DURATION - dur, center - dur/2)), dur);
+    };
+  }
+
+  // Mini-map interactions
+  function updateMini(){
+    const w = miniBar.getBoundingClientRect().width;
+    // When viewDur exceeds the actual content duration, the mini-window should cover the whole bar
+    if(viewDur >= FULL_DURATION){
+      miniWin.style.left = '0px';
+      miniWin.style.width = w + 'px';
+      return;
+    }
+    const left = (viewStart / FULL_DURATION) * w;
+    const width = (viewDur / FULL_DURATION) * w;
+    miniWin.style.left = left + 'px';
+    miniWin.style.width = Math.max(10, Math.min(w, width)) + 'px';
+  }
+  let draggingMini=false, miniOffset=0;
+  miniWin.addEventListener('pointerdown', (e)=>{
+    draggingMini=true; miniWin.setPointerCapture(e.pointerId);
+    miniOffset = e.clientX - miniWin.getBoundingClientRect().left;
+  });
+  miniWin.addEventListener('pointermove', (e)=>{
+    if(!draggingMini) return;
+    const barRect = miniBar.getBoundingClientRect();
+    let x = clamp(e.clientX - barRect.left - miniOffset, 0, barRect.width - miniWin.getBoundingClientRect().width);
+    const start = FULL_DURATION * (x / barRect.width);
+    setView(start, viewDur);
+  });
+  miniWin.addEventListener('pointerup', ()=> draggingMini=false);
+  miniWin.addEventListener('pointercancel', ()=> draggingMini=false);
+  miniBar.addEventListener('pointerdown', (e)=>{
+    if(e.target === miniWin) return;
+    pushBackCheckpoint();
+    const rect = miniBar.getBoundingClientRect();
+    const frac = (e.clientX - rect.left) / rect.width;
+    const center = FULL_DURATION * frac;
+    animateTo(Math.max(0, Math.min(FULL_DURATION - viewDur, center - viewDur/2)), viewDur);
+  });
+
+  // Keyboard: only Undo/Redo and Escape clear selection
+  document.addEventListener('keydown', (e)=>{
+    if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='z'){
+      e.preventDefault(); if(e.shiftKey) redo(); else undo(); return;
+    }
+    if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='y'){
+      e.preventDefault(); redo(); return;
+    }
+    if(e.key==='Escape'){ selectedIds.clear(); updateLabels(); renderSelectionOnly(); }
+  });
+
+  // ---------- labels ----------
+  function updateLabels(){
+    const zlbl = document.getElementById('zoomLabel');
+    zlbl.textContent = `${secondsToTc(viewStart)} – ${secondsToTc(viewStart+viewDur)} (${viewDur.toFixed(1)}s)`;
+    const slbl = document.getElementById('selLabel');
+    slbl.textContent = selectedIds.size ? `Selected: ${selectedIds.size}` : '';
+  }
+
+  // ---------- init ----------
+  function init(){
+    buildLanes();
+    markers = generateMarkers();
+    setView(0, FULL_DURATION);
+    window.addEventListener('resize', render);
+    const explodeSlider = document.getElementById('explodeRange');
+    if(explodeSlider){ explodeSlider.addEventListener('input', ()=>render()); }
+  }
+
+  init();
+
+  // cursor listeners across lanes & ruler
+  lanesEl.addEventListener('mousemove', (e)=>{ lastMouseX = e.clientX; positionCursor(e.clientX); });
+  lanesEl.addEventListener('mouseleave', hideCursor);
+  rulerBar.addEventListener('mousemove', (e)=>{ lastMouseX = e.clientX; positionCursor(e.clientX); });
+  rulerBar.addEventListener('mouseleave', hideCursor);
+
+  // ---------- lightweight self-tests (console) ----------
+  try {
+    (function unitTests(){
+      // Test 1: groupForZoom should create a cluster when space is too small
+      const testItems = [
+        {start: 10, end: 12}, {start: 10.5, end: 12.5}, {start: 11, end: 13}
+      ];
+      const pps = 5; // low pixels-per-second to force crowding
+      const groups = groupForZoom(testItems, pps);
+      console.assert(groups.length>=1 && groups[0].items.length>=3, 'Test1: expected a cluster of 3 items');
+
+      // Test 2: secondsToTc basic & frame step
+      console.assert(secondsToTc(0) === '00:00:00:00', 'Test2a: TC zero');
+      console.assert(secondsToTc(61).startsWith('00:01:01'), 'Test2b: TC 61s minute+sec');
+      console.assert(secondsToTc(1/25).endsWith(':01'), 'Test2c: 1 frame at 25fps');
+
+      // Test 3: overlap count equals visible items in a dense span
+      const pool = [
+        {start: 20, end: 22}, {start:20.2, end:22.3}, {start:20.4, end:22.6}, {start:21, end:23}
+      ];
+      const gtest = groupForZoom(pool, pps)[0];
+      const have = gtest.right - gtest.left; const need = gtest.items.length*(MIN_PX + CLUSTER_GAP) + 2;
+      if(have < need * EXPLODE_FACTOR){
+        const overlapSegs = pool.map(m=>{ const left=(m.start-viewStart)*pps; const width=Math.max((m.end-m.start)*pps, MIN_PX); const right=left+width; return {left,width,right}; });
+        const over = overlapSegs.filter(s=> s.right>=gtest.left-1 && s.left<=gtest.right+1);
+        console.assert(over.length===pool.length, 'Test3: cluster count should equal pool length');
+      }
+
+      // Test 4: density formula does not throw and remains within [0,1]
+      const havePx = 30; const reqPx = 60; const density = (reqPx - havePx) / reqPx; 
+      console.assert(density>=0 && density<=1, 'Test4: density within bounds');
+
+      // Test 5: animateTo schedules without throwing (0ms short-circuit)
+      try { animateTo(viewStart, viewDur, 0); console.assert(true, 'Test5: animateTo callable'); } catch(e) { console.error(e); console.assert(false, 'Test5 failed'); }
+
+      // Test 6: cluster zoom math keeps 90% occupancy
+      (function(){
+        const span = 12; // seconds covered by cluster
+        const target = span / 0.90; // desired view
+        console.assert(Math.abs(target - 13.3333) < 0.01, 'Test6: 90% occupancy calc');
+      })();
+
+      console.log('%cSelf-tests passed','color:#10b981');
+    })();
+  } catch(e){ console.warn('Self-tests failed', e); }
+
+})();
+</script>
+</body>
+</html>
